@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <body>
+    <main>
+      <div style="width: max-content">
+        <h1>Registration</h1>
+        <input
+          type="text"
+          id="username"
+          required
+          placeholder="Enter username"
+        />
+        <br />
+        <input type="email" id="email" required placeholder="Enter email" />
+        <br />
+        <input
+          type="password"
+          id="password"
+          required
+          placeholder="Enter password"
+        />
+        <br />
+        <input
+          type="text"
+          id="avatar-url"
+          placeholder="Link to your avatar image"
+        />
+        <br />
+        <button id="submitButton">Register</button>
+      </div>
+      <div style="width: max-content">
+        <h1>login</h1>
+
+        <input type="email" id="emailLog" required placeholder="Enter email" />
+        <br />
+        <input
+          type="text"
+          id="passwordLog"
+          required
+          placeholder="Enter password"
+        />
+        <br />
+        <button id="LoginButton">Enter</button>
+      </div>
+    </main>
+    <script>
+      const login = document.querySelector("#username");
+      const email = document.querySelector("#email");
+      const password = document.querySelector("#password");
+      const submitButton = document.querySelector("#submitButton");
+      submitButton.addEventListener("click", async function () {
+        const response = await fetch("http://localhost:3000/registration", {
+          body: JSON.stringify({
+            login: login.value,
+            email: email.value,
+            password: password.value,
+          }),
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+        const responseMessage = await response.text();
+        console.log(responseMessage);
+      });
+      const emailLog = document.querySelector("#emailLog");
+      const passwordLog = document.querySelector("#passwordLog");
+      const loginButton = document.querySelector("#LoginButton");
+      loginButton.addEventListener("click", async function () {
+        const logres = await fetch("http://localhost:3000/login", {
+          body: JSON.stringify({
+            email: emailLog.value,
+            password: passwordLog.value,
+          }),
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+        });
+        const LoginResMessage = await logres.text();
+        console.log(LoginResMessage);
+        alert(LoginResMessage);
+      });
+    </script>
+  </body>
+</html>
