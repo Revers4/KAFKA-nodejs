@@ -317,9 +317,7 @@ app.post("/watch/anime", authModdleware, async (req, res) => {
       "SELECT * FROM w_animes WHERE user_id = $1 AND id =$2",
       [userId, animeId]
     );
-    // console.log(ExictingWAnime.rows);
     if (ExictingWAnime.rows.length == 0) {
-      console.log("if");
       await pool.query(
         "INSERT INTO w_animes (id, user_id, status) VALUES ($1,$2,$3)",
         [animeId, userId, status]
@@ -333,6 +331,56 @@ app.post("/watch/anime", authModdleware, async (req, res) => {
       );
       res.json("Updated");
     }
+  } catch (error) {
+    console.log(error);
+  }
+});
+
+app.get("/favorites/animes/:Login", async (req, res) => {
+  try {
+    const page = Number(req.query.page);
+    const limit = Number(req.query.limit);
+    const status = req.query.status;
+    const offset = (page - 1) * limit;
+    const usersId = (
+      await pool.query("SELECT id FROM users WHERE login = $1", [
+        req.params.Login,
+      ])
+    ).rows[0].id;
+    if (!page || !limit) {
+      return res.status(400).json("Page or limit is required");
+    }
+    const animeArray = (
+      await pool.query(
+        "SELECT id FROM w_animes WHERE user_id = $1 AND status = $2 OFFSET $3 LIMIT $4",
+        [usersId, status, offset, limit]
+      )
+    ).rows;
+    const animeIds = animeArray.map((id) => {
+      return id.id;
+    });
+    const body = {
+      query: `{
+              animes(ids: "${animeIds}") {
+              english
+              russian
+              poster {
+                  mainUrl
+              }
+            }
+          }
+      }`,
+    };
+    const resp = await fetch(`https://shikimori.one/api/graphql`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const Bbody = await resp.json();
+    res.json(Bbody.data.animes);
   } catch (error) {
     console.log(error);
   }
@@ -549,7 +597,7 @@ app.post("/friend/requests/add", authModdleware, async (req, res) => {
         "SELECT * FROM friends WHERE user_id = $1 AND friend_id = $2",
         [userId, friendId.rows[0].id]
       );
-      if ((AreTheyFriend.rows.length = 0)) {
+      if (AreTheyFriend.rows.length == 0) {
         if (DidHeSendAReq.rows.length > 0) {
           await pool.query(
             "DELETE FROM friend_requests WHERE user_id = $1 AND friend_id =$2",
@@ -690,6 +738,53 @@ app.put("/friend-requests", authModdleware, async (req, res) => {
     console.log(error);
     res.status(500).send("Something went wrong");
     return;
+  }
+});
+
+app.delete("/friend", authModdleware, async (req, res) => {
+  try {
+    const userId = res.locals.user.userId;
+    const friend_id = req.body.id;
+    const AreTheyFriend = await pool.query(
+      "SELECT * FROM friends WHERE user_id = $1 AND friend_id =$2",
+      [userId, friend_id]
+    );
+    if (AreTheyFriend.rows.length > 0) {
+      await pool.query(
+        "DELETE FROM friends WHERE user_id = $1 AND friend_id =$2",
+        [userId, friend_id]
+      );
+      await pool.query(
+        "DELETE FROM friends WHERE user_id = $1 AND friend_id =$2",
+        [friend_id, userId]
+      );
+      res.json("Друг вам больше не друг!");
+    } else {
+      res.status(400).json("You are not friends!!");
+    }
+  } catch (error) {
+    console.log(error);
+    res.status(500).json("Something went wrong");
+    return;
+  }
+});
+
+app.get("/friends-list/:Login", async (req, res) => {
+  try {
+    const login = req.params.Login;
+    const userId = (
+      await pool.query("SELECT id FROM users WHERE login = $1", [login])
+    ).rows[0].id;
+    const data = await pool.query(
+      `SELECT users.login, users.avatar_url, users.id
+      FROM friends
+      LEFT JOIN users ON friends.user_id = users.id
+      WHERE friends.friend_id = $1`,
+      [userId]
+    );
+    res.json(data.rows);
+  } catch (error) {
+    console.log(error);
   }
 });
 
