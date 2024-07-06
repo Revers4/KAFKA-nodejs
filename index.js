@@ -11,6 +11,8 @@ const path = require("path");
 const favoritesRouter = require("./routes/favorites");
 const config = require("./config");
 const pool = require("./db");
+const ws = require("ws")
+const cookie = require("cookie")
 
 app.use(
   cors({
@@ -267,21 +269,25 @@ app.post("/refresh-token", function (req, res) {
 });
 
 app.get("/profile", authModdleware, async (req, res) => {
-  const userId = res.locals.user.userId;
-  const userProfile = await pool.query(
-    "SELECT login, avatar_url FROM users WHERE id = $1",
-    [userId]
-  );
-  const profile = userProfile.rows[0];
-  profile.avatar_url = "http://localhost:3000/" + profile.avatar_url;
-  res.json(profile);
+  try {
+    const userId = res.locals.user.userId;
+    const userProfile = await pool.query(
+      "SELECT login, avatar_url, id FROM users WHERE id = $1",
+      [userId]
+    );
+    const profile = userProfile.rows[0];
+    profile.avatar_url = "http://localhost:3000/" + profile.avatar_url;
+    res.json(profile);
+  } catch (error) {
+    console.log(error)
+  }
 });
 
 app.post("/profilee", async (req, res) => {
   try {
     const userLogin = req.body;
     const getProfile = await pool.query(
-      "SELECT login, avatar_url FROM users WHERE login = $1",
+      "SELECT login, avatar_url, id FROM users WHERE login = $1",
       [userLogin.login]
     );
     if (getProfile.rows.length == 0) {
@@ -300,25 +306,33 @@ app.post("/profilee", async (req, res) => {
 app.post("/watch/anime", authModdleware, async (req, res) => {
   try {
     const animeId = req.body.id;
-    const userId = res.locals.user.userId;
     const status = req.body.status;
-    const ExictingWAnime = await pool.query(
-      "SELECT * FROM w_animes WHERE user_id = $1 AND id =$2",
-      [userId, animeId]
-    );
-    if (ExictingWAnime.rows.length == 0) {
+    const userId = res.locals.user.userId;
+    if(status == "remove"){
       await pool.query(
-        "INSERT INTO w_animes (id, user_id, status) VALUES ($1,$2,$3)",
-        [animeId, userId, status]
+        "DELETE FROM w_animes WHERE user_id = $1 AND id =$2",
+        [userId, animeId]
       );
-      res.json("Added");
-      return;
-    } else {
-      const profile = await pool.query(
-        "UPDATE w_animes SET status =$1 WHERE user_id =$2 AND id =$3 ",
-        [status, userId, animeId]
+    }
+    else{
+      const ExictingWAnime = await pool.query(
+        "SELECT * FROM w_animes WHERE user_id = $1 AND id =$2",
+        [userId, animeId]
       );
-      res.json("Updated");
+      if (ExictingWAnime.rows.length == 0) {
+        await pool.query(
+          "INSERT INTO w_animes (id, user_id, status) VALUES ($1,$2,$3)",
+          [animeId, userId, status]
+        );
+        res.json("Added");
+        return;
+      } else {
+        await pool.query(
+          "UPDATE w_animes SET status =$1 WHERE user_id =$2 AND id =$3 ",
+          [status, userId, animeId]
+        );
+        res.json("Updated");
+      }
     }
   } catch (error) {
     console.log(error);
@@ -620,6 +634,7 @@ app.delete("/friend", authModdleware, async (req, res) => {
 app.get("/friends-list/:Login", async (req, res) => {
   try {
     const login = req.params.Login;
+    const limit = req.query.limit
     const userId = (
       await pool.query("SELECT id FROM users WHERE login = $1", [login])
     ).rows[0].id;
@@ -627,8 +642,9 @@ app.get("/friends-list/:Login", async (req, res) => {
       `SELECT users.login, users.avatar_url, users.id
       FROM friends
       LEFT JOIN users ON friends.user_id = users.id
-      WHERE friends.friend_id = $1`,
-      [userId]
+      WHERE friends.friend_id = $1
+      LIMIT $2`,
+      [userId,limit]
     );
     res.json(data.rows);
   } catch (error) {
@@ -636,15 +652,86 @@ app.get("/friends-list/:Login", async (req, res) => {
   }
 });
 
+app.get("/friend-data/:friendLogin", async (req, res) =>{
+  try {
+    const login = req.params.friendLogin;
+    const data = (
+      await pool.query("SELECT id, login, avatar_url FROM users WHERE login = $1", [login])
+    ).rows[0];
+    res.json(data);
+  } catch (error) {
+    console.log(error)
+  }
+})
+
+app.get("/get/friends/message", authModdleware, async (req, res) => {
+  try {
+    const userId = res.locals.user.userId;
+    const data = await pool.query(`SELECT users.avatar_url, users.login, users.id, 
+    dialog.last_message, dialog.last_message_date, dialog.who_wrote_last_message
+    FROM dialog
+    LEFT JOIN users ON dialog.first_person = users.id OR dialog.second_person = users.id
+    WHERE dialog.first_person =$1 OR dialog.second_person =$1
+    ORDER BY last_message_date DESC
+    LIMIT 20`,[userId])
+    const filteredDate = data.rows.filter((e) => e.id !== userId)
+    res.json(filteredDate);
+  } catch (error) {
+    console.log(error);
+  }
+});
+
+app.get("/get/messages/:friendLogin", authModdleware, async (req, res) =>{
+  try {
+    const userId = res.locals.user.userId;
+    const friendlogin = req.params.friendLogin;
+    const page = Number(req.query.page);
+    const offset = (page - 1) * 10;
+    const friendId = await (await pool.query(`SELECT id FROM users WHERE login =$1`,[friendlogin])).rows[0].id
+    const data = await pool.query(`SELECT message, sender_id, created_at FROM messages WHERE (sender_id = $1 OR sender_id = $2) AND (reciver_id =$1 OR reciver_id =$2)
+    ORDER BY created_at DESC
+    OFFSET $3
+    LIMIT 12`,[userId, friendId, offset])
+    res.json(data.rows);
+  } catch (error) {
+    console.log(error)
+  }
+})
+
 app.delete("/logout", async (req, res) => {
   res.clearCookie("access_token");
   res.clearCookie("refresh_token");
   res.json("You are logged out");
 });
 
-app.listen(3000, () => {
+const server = app.listen(3000, () => {
   console.log("Server started on port 3000");
 });
+
+const wsServer = require("./routes/ws/ws")
+server.on("upgrade", (req, socket, head) => {
+  const ACCESS_TOKEN_SECRET =
+    "2i7NH76FhuhVYHHCLNbVZFymxqYS8uquuvmkrCmB5yxxSvujVjCXbK3i7NayQMKKp8cX92jvqKj6PbYzZRM7rRMyuPbdYznzDAkFDNerYbv7yE90JchfJ2vTvazdBECCJujub4LtkNUL8kuUf8uU6TjVtt3vKzyvgWBWJMdXmJ2YSFZnV195nicMRzBzYTMMMRzRPHAXNCLDWJxQ1GXjALN3FhBCWxReEzpvYQd3VKP8HAHbtNLpHk0rr2NwEEZ";
+
+    const accessToken = cookie.parse(req.headers.cookie).access_token
+  
+    if (!accessToken) {
+      socket.destroy()
+      return;
+    }
+  
+    try {
+      const payload = jwt.verify(accessToken, ACCESS_TOKEN_SECRET);
+      req.user = payload
+    } catch (error) {
+      console.log(error);
+      socket.destroy()
+      return;
+    }
+    wsServer.handleUpgrade(req, socket, head, (ws) => {
+    wsServer.emit('connection', ws, req)
+  })
+})
 
 /* CREATE TABLE Comments (
   comment_id INT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -664,13 +751,44 @@ CREATE TABLE friend_requests (
     FOREIGN KEY (friend_id) REFERENCES users(id)
 ) 
 
-CREATE TABLE friends (
-    user_id INT NOT NULL,
-    friend_id INT NOT NULL,
+UPDATE dialog SET (last_message ="Hiiii") WHERE (first_person =21 OR first_person =26) AND (second_person =21 OR second_person =26);
+
+CREATE TABLE messages (
+    sender_id INT NOT NULL,
+    reciver_id INT NOT NULL,
+    message VARCHAR(500) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (friend_id) REFERENCES users(id)
+    FOREIGN KEY (sender_id) REFERENCES users(id),
+    FOREIGN KEY (reciver_id) REFERENCES users(id)
 )
+
+
+CREATE TABLE dialog (
+    first_person INT NOT NULL,
+    second_person INT NOT NULL,
+    last_message VARCHAR(500) NOT NULL,
+    last_message_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    who_wrote_last_message INT NOT NULL,
+    FOREIGN KEY (first_person) REFERENCES users(id),
+    FOREIGN KEY (second_person) REFERENCES users(id)
+);
+
+SELECT users.login, users.avatar_url, users.id
+  FROM friends
+  LEFT JOIN users ON friends.user_id = users.id
+  WHERE friends.friend_id = $1
+
+SELECT * FROM messages
+WHERE (sender_id =21 OR sender_id =26) AND (reciver_id =26 OR reciver_id =21)
+ORDER BY created_at DESC
+OFFSET 0
+LIMIT 2;
+
+
+SELECT users.avatar_url, users.login, users.id, dialog.last_message
+  FROM dialog
+  LEFT JOIN users ON dialog.first_person = users.id OR dialog.second_person = users.id
+  WHERE dialog.first_person = 21 OR dialog.second_person = 21;
 
 
  */
